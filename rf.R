@@ -57,6 +57,7 @@ times <- sapply(a,function(i) bench(i,result='time'))
 # it's faster to train many small models than one big one. What I don't know
 # is where I run into diminishing returns in terms of training model size and 
 # number of little models. 
+
 # According to a line fit in Excel, RF training took about 2e-6*N^2 seconds
 
 # First, how does accuracy improve with more training data?
