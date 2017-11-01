@@ -4,10 +4,11 @@
 # into cross validation loops correctly.
 
 library(dplyr)
-library(ffbase2)
 library(lubridate)
 
-ffload(file='train.ff') # start here
+system.time(train <- read.csv('train.csv'))
+# Uses 85.3% of memory on an r4.large instance; might be a little tight!
+# Only about 11% on r4.xlarge
 
 ###############################################################################
 # Add date-related features
@@ -32,7 +33,12 @@ holidays <- read.csv('holidays_events.csv') %>%
   select(date,type)
 all_dates <- left_join(all_dates,holidays,by='date') %>%
   mutate(type=as.character(type),
-         type=ifelse(is.na(type),'None',type))
+         type=ifelse(is.na(type),'None',type)) %>%
+  group_by(date) %>% # need this to deal with multiple events on same date
+  summarize(year=first(year),month=first(month),
+            wday=first(wday),type=first(type)) %>%
+  mutate(type=as.factor(type))
+
 
 ## Add oil prices
 oil <- read.csv('oil.csv') %>%
@@ -42,7 +48,7 @@ all_dates <- left_join(all_dates,oil,by='date')
 all_dates$imputed <- sapply(1:nrow(all_dates), function(i) {
   start <- max(1,i-3)
   end <- min(i+3,nrow(all_dates))
-  mean(all_dates[start:end,'dcoilwtico'],na.rm=TRUE)
+  all_dates[start:end,'dcoilwtico'] %>% colMeans(na.rm=TRUE)
 })
 all_dates <- all_dates %>% 
   mutate(dcoilwtico=ifelse(is.na(dcoilwtico),imputed,dcoilwtico)) %>%
@@ -51,7 +57,10 @@ all_dates <- all_dates %>%
 ## Join date features to training data
 train$date <- as.character(train$date)
 all_dates$date <- as.character(all_dates$date)
-train2 <- left_join(train,all_dates,by='date')
+system.time(train2 <- left_join(train,all_dates,by='date'))
+# takes 11.5s on r4.xlarge
+rm(train)
+
 ###############################################################################
 # Add store-related features
 # Ignore explicit geography information for now; I'll want that if I start
@@ -61,6 +70,7 @@ stores <- read.csv('stores.csv') %>%
   mutate(cluster=as.factor(cluster)) %>%
   select(store_nbr,type,cluster)
 train3 <- left_join(train2,stores,by='store_nbr')
+rm(train2)
 
 # I think the best way to handle regional holidays would be to keep the 
 # locality identifiers for both stores and holidays, create a new 
@@ -80,12 +90,20 @@ items <- read.csv('items.csv')
 
 # How many classes and families are there?
 items$class %>% table # too many for a reasonable factor variable
-items$family %>% table # better
+items$family %>% table  %>% sort(decreasing=TRUE) # better
+# TODO: do things work better if I consolidate into a smaller number of families?
 
 items <- items %>%
-  select(-class)
+  select(-class) 
 
-train4 <- left_join(train3,items,by='item_nbr')
-ffsave(train4,file='train4.ff')
+system.time(train4 <- left_join(train3,items,by='item_nbr')) 
+rm(train3)
 
-# ready to move on to some real training next time!
+###############################################################################
+# Drop columns that won't be useful for training
+###############################################################################
+train5 <- train4 %>%
+  select(-date,-store_nbr,-item_nbr) %>%
+  mutate(unit_sales = ifelse(unit_sales < 0,0,unit_sales)) 
+# positive unit_sales required because of ln in score function
+rm(train4)
