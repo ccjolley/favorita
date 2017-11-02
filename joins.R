@@ -6,13 +6,11 @@
 library(dplyr)
 library(lubridate)
 
-#system.time(train <- read.csv('train.csv'))
-# Uses 85.3% of memory on an r4.large instance; might be a little tight!
-# Only about 11% on r4.xlarge
+###############################################################################
+# Load auxiliary datasets
+###############################################################################
 
-###############################################################################
-# Add date-related features
-###############################################################################
+### Date features
 all_dates <- data.frame(date=seq(ymd('2013-01-01'),
                                  ymd('2017-08-15'),
                                  by='1 day')) %>%
@@ -20,12 +18,8 @@ all_dates <- data.frame(date=seq(ymd('2013-01-01'),
          month=month(date,label=TRUE),
          wday=wday(date,label=TRUE))
 
-# TODO: How to handle April 16th 2016 earthquake? Need to look at total sales.
-# TODO: How quickly do things taper off after paydays? (15th and end of month)
 
-## Add holidays
-# TODO: Expand this out to regional and local holidays by interacting with 
-# store locations
+## Holidays; join to date features
 holidays <- read.csv('holidays_events.csv') %>%
   mutate(date=ymd(date)) %>%
   filter(locale=='National') %>%
@@ -39,8 +33,12 @@ all_dates <- left_join(all_dates,holidays,by='date') %>%
             wday=first(wday),type=first(type)) %>%
   mutate(type=as.factor(type))
 
+# TODO: How to handle April 16th 2016 earthquake? Need to look at total sales.
+# TODO: How quickly do things taper off after paydays? (15th and end of month)
+# TODO: Expand this out to regional and local holidays by interacting with 
+# store locations
 
-## Add oil prices
+## Oil prices; join to date features
 oil <- read.csv('oil.csv') %>%
   mutate(date=ymd(date))
 all_dates <- left_join(all_dates,oil,by='date')
@@ -54,49 +52,53 @@ all_dates <- all_dates %>%
   mutate(dcoilwtico=ifelse(is.na(dcoilwtico),imputed,dcoilwtico)) %>%
   select(-imputed)
 
-## Join date features to training data
-train$date <- as.character(train$date)
-all_dates$date <- as.character(all_dates$date)
-system.time(train2 <- left_join(train,all_dates,by='date'))
-# takes 11.5s on r4.xlarge
-rm(train)
+all_dates$date <- as.character(all_dates$date) # makes joins easier
 
-###############################################################################
-# Add store-related features
-# Ignore explicit geography information for now; I'll want that if I start
-# looking at regional holidays.
-###############################################################################
+## Store features
 stores <- read.csv('stores.csv') %>%
   mutate(cluster=as.factor(cluster)) %>%
   select(store_nbr,type,cluster)
-train3 <- left_join(train2,stores,by='store_nbr')
-rm(train2)
-
+# TODO: ignoring explicit geography for now; will need that if I want
+# regional holidays
 # I think the best way to handle regional holidays would be to keep the 
 # locality identifiers for both stores and holidays, create a new 
 # column that flags whether there's a local or regional holiday, then merge
 # that into the 'type' column (relpacing some 'None' entries).
 
+## Item features
+items <- read.csv('items.csv') %>%
+  select(-class) # too many for a reasonable factor variable
+# TODO: Maybe make a factor variable out of the most heavily-populated classes
+
 ###############################################################################
-# Add item-related features
-#
-# TODO: Since item classes are too numerous to make a good factor variable
-# (and families might be), I'll need to go back to the training data to find
-# an empirical way to group classes together into a smaller number of classes
-# or assign them numeric features like their intra-class mean or standard 
-# deviation.
+# Join basic features to these and drop the variables that won't be useful for
+# training.
+# Because I'm not actually calculating anything based on the dataset being 
+# processed, there's no reason not to break a dataset into small chunks for 
+# this process to save memory.
 ###############################################################################
-items <- read.csv('items.csv')
+join_data <- function(d) {
+  d$date <- as.character(d$date)
+  d %>%
+    left_join(all_dates,by='date') %>%
+    left_join(stores,by='store_nbr') %>%
+    left_join(items,by='item_nbr') %>%
+    select(-id,-store_nbr,-item_nbr)
+}
 
-# How many classes and families are there?
-items$class %>% table # too many for a reasonable factor variable
-items$family %>% table  %>% sort(decreasing=TRUE) # better
-# TODO: do things work better if I consolidate into a smaller number of families?
-
-items <- items %>%
-  select(-class) 
-
-system.time(train4 <- left_join(train3,items,by='item_nbr')) 
-rm(train3)
+###############################################################################
+# Convert a dataframe with lots of factor variables into a sparse matrix that
+# can be used for xgBoost, PCA, etc.
+###############################################################################
+df2sparse <- function(d) {
+  has_na <- names(d)[is.na(d) %>% colSums > 0]
+  for (n in has_na) {
+    d[,n] <- ifelse(is.na(d[,n]),'NA',d[,n]) %>% as.factor
+  }
+  model.matrix(~ .+0, data=d, 
+               contrasts.arg = lapply(d[,sapply(d, is.factor)], 
+                                      contrasts, contrasts=FALSE)) %>%
+    Matrix(sparse=TRUE)
+}
 
 
