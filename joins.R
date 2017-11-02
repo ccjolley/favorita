@@ -6,7 +6,7 @@
 library(dplyr)
 library(lubridate)
 
-system.time(train <- read.csv('train.csv'))
+#system.time(train <- read.csv('train.csv'))
 # Uses 85.3% of memory on an r4.large instance; might be a little tight!
 # Only about 11% on r4.xlarge
 
@@ -99,11 +99,4 @@ items <- items %>%
 system.time(train4 <- left_join(train3,items,by='item_nbr')) 
 rm(train3)
 
-###############################################################################
-# Drop columns that won't be useful for training
-###############################################################################
-train5 <- train4 %>%
-  select(-date,-store_nbr,-item_nbr) %>%
-  mutate(unit_sales = ifelse(unit_sales < 0,0,unit_sales)) 
-# positive unit_sales required because of ln in score function
-rm(train4)
+
