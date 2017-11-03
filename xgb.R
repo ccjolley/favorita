@@ -11,20 +11,23 @@ train <- train %>%
   select(-unit_sales)
 source('joins.R')
 
-# Not sure I can do this in memory, but here it goes...
-train_j <- train %>%
-  join_data %>%
-  select(-date,-log_sales) %>%
-  df2sparse
-
-# Looks like it made it through the joins but blew out on model.matrix
-n <- 100
-res <- Matrix(nrow=0,ncol=0)
-step <- round(nrow(train)/100 + 1)
+# Haven't succeeded at doing this in memory in one shot; try it this way
+n <- 10
+step <- round(nrow(train)/n + 1)
+train_j <- Matrix(nrow=0,ncol=0)
 for (i in 1:n) {
   start <- (i-1)*step + 1
   end <- min(i*step,nrow(train))
-  chunk <- train[]
+  paste0('chunk ',i,', rows ',start,'-',end) %>% print
+  chunk <- train[start:end,] %>%
+    join_data %>%
+    select(-date,-log_sales) %>%
+    mutate(onpromotion=factor(onpromotion,levels=c('TRUE','FALSE','NA'))) %>% 
+    df2sparse
+  if (ncol(train_j) == 0) {
+    train_j <- Matrix(nrow=0,ncol=ncol(chunk),sparse=TRUE)
+  }
+  train_j <- rbind(train_j,chunk)
 }
 
 # Save memory by keeping only the columns I still need in train
@@ -38,12 +41,12 @@ cutoff <- ymd('2017-07-31')
 dtrain <- xgb.DMatrix(data = train_j[train$date <= cutoff,],
                       label=train[train$date <= cutoff,'log_sales'])
 dtest <- xgb.DMatrix(data = train_j[train$date > cutoff,],
-                      label=train[train$date > cutoff,'log_sales'])
+                     label=train[train$date > cutoff,'log_sales'])
 
 watchlist <- list(train=dtrain, test=dtest)
 xgb1 <- xgb.train(data = dtrain, 
-                watchlist=watchlist,
-                objective = "reg:linear",
-                nthread=8, # for AWS r4.2xlarge
-                nrounds=200)
+                  watchlist=watchlist,
+                  objective = "reg:linear",
+                  nthread=8, # for AWS r4.2xlarge
+                  nrounds=200)
 # Seems to be overfitting after about 10 rounds
