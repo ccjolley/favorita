@@ -93,7 +93,8 @@ join_data <- function(d) {
 df2sparse <- function(d) {
   has_na <- names(d)[is.na(d) %>% colSums > 0]
   for (n in has_na) {
-    d[,n] <- ifelse(is.na(d[,n]),'NA',d[,n]) %>% as.factor
+    d[,n] <- ifelse(is.na(d[,n]),'NA',as.character(d[,n])) %>% 
+      factor(levels=levels(d[,n]))
   }
   model.matrix(~ .+0, data=d, 
                contrasts.arg = lapply(d[,sapply(d, is.factor)], 

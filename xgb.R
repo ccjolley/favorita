@@ -12,21 +12,22 @@ train <- train %>%
 source('joins.R')
 
 # Haven't succeeded at doing this in memory in one shot; try it this way
-n <- 100
-res <- Matrix(nrow=0,ncol=0)
-step <- round(nrow(train)/100 + 1)
+n <- 10
+step <- round(nrow(train)/n + 1)
+train_j <- Matrix(nrow=0,ncol=0)
 for (i in 1:n) {
-  paste('chunk ',i) %>% print
   start <- (i-1)*step + 1
   end <- min(i*step,nrow(train))
+  paste0('chunk ',i,', rows ',start,'-',end) %>% print
   chunk <- train[start:end,] %>%
     join_data %>%
     select(-date,-log_sales) %>%
+    mutate(onpromotion=factor(onpromotion,levels=c('TRUE','FALSE','NA'))) %>% 
     df2sparse
-  if (ncol(res) == 0) {
-    res <- Matrix(nrow=0,ncol=ncol(chunk))
+  if (ncol(train_j) == 0) {
+    train_j <- Matrix(nrow=0,ncol=ncol(chunk),sparse=TRUE)
   }
-  res <- rbind(res,chunk)
+  train_j <- rbind(train_j,chunk)
 }
 
 # Save memory by keeping only the columns I still need in train
