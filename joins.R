@@ -14,9 +14,9 @@ library(lubridate)
 all_dates <- data.frame(date=seq(ymd('2013-01-01'),
                                  ymd('2017-08-15'),
                                  by='1 day')) %>%
-  mutate(year=as.factor(year(date)),
-         month=month(date,label=TRUE),
-         wday=wday(date,label=TRUE))
+  mutate(year=as.factor(lubridate::year(date)),
+         month=lubridate::month(date,label=TRUE),
+         wday=lubridate::wday(date,label=TRUE))
 
 
 ## Holidays; join to date features
