@@ -4,15 +4,14 @@ library(Matrix)
 library(data.table)
 library(lubridate)
 
-system.time(train <- fread('train.csv',header=TRUE,sep=',')) # 33% of memory on r4.2xlarge
+train <- fread('train.csv',header=TRUE,sep=',') # 33% of memory on r4.2xlarge
 train <- train %>% 
   mutate(log_sales=ifelse(unit_sales > 0,log(unit_sales+1),0),
          date=ymd(date)) %>%
   select(-unit_sales)
 source('joins.R')
 
-# Haven't succeeded at doing this in memory in one shot; try it this way
-n <- 10
+n <- 25
 step <- round(nrow(train)/n + 1)
 train_j <- Matrix(nrow=0,ncol=0)
 for (i in 1:n) {
@@ -29,6 +28,7 @@ for (i in 1:n) {
   }
   train_j <- rbind(train_j,chunk)
 }
+rm(n,step,i,start,end,chunk)
 
 # Save memory by keeping only the columns I still need in train
 train <- train %>% select(date,log_sales)
@@ -42,6 +42,10 @@ dtrain <- xgb.DMatrix(data = train_j[train$date <= cutoff,],
                       label=train[train$date <= cutoff,'log_sales'])
 dtest <- xgb.DMatrix(data = train_j[train$date > cutoff,],
                      label=train[train$date > cutoff,'log_sales'])
+xgb.DMatrix.save(dtrain,'bench-train.data')
+xgb.DMatrix.save(dtest,'bench-test.data')
+# dtrain <- xgb.DMatrix('bench-train.data')
+# dtest <- xgb.DMatrix('bench-test.data')
 
 watchlist <- list(train=dtrain, test=dtest)
 xgb1 <- xgb.train(data = dtrain, 
