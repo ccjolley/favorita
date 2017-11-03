@@ -34,8 +34,9 @@ rm(n,step,i,start,end,chunk)
 train <- train %>% select(date,log_sales)
 
 ###############################################################################
-# Now for the training!
-# simulate the real prediction situation by splitting out the last two weeks
+# Test run of training to find optimal # of iterations for default xgboost 
+# parameters.
+# Simulate the real prediction situation by splitting out the last two weeks
 ###############################################################################
 cutoff <- ymd('2017-07-31')
 dtrain <- xgb.DMatrix(data = train_j[train$date <= cutoff,],
@@ -51,6 +52,37 @@ watchlist <- list(train=dtrain, test=dtest)
 xgb1 <- xgb.train(data = dtrain, 
                   watchlist=watchlist,
                   objective = "reg:linear",
-                  nthread=8, # for AWS r4.2xlarge
+                  nthread=16, # for AWS r4.4xlarge
                   nrounds=200)
-# Seems to be overfitting after about 10 rounds
+
+# This isn't a memory hog, especially when I load dtrain and dtest in a clean R 
+# session using xgb.DMatrix(). On a r4.4xlarge, memory usage looks to be 
+# pegged at 17.6%, so I could probably get away with an r4.2xlarge -- fewer
+# cores would slow things down, but memory usage should still be OK. Or an 
+# m4.4xlarge for more cores...
+
+###############################################################################
+# Production training, generate output
+###############################################################################
+test <- fread('test.csv',header=T,sep=',')
+test_sp <- test %>%
+  join_data %>%
+  select(-date) %>%
+  mutate(onpromotion=factor(onpromotion,levels=c('TRUE','FALSE','NA'))) %>% 
+  df2sparse
+
+# TODO: make sure that this is giving me the same factor levels!
+
+dprod <- xgb.DMatrix(data = train_j,
+                     label=train$log_sales)
+xgb_prod <- xgb.train(data = dprod, 
+                      objective = "reg:linear",
+                      nthread=16, # for AWS r4.4xlarge
+                      nrounds=200)
+
+# TODO: Can I do a custom objective function?
+
+pred <- predict(xgb_prod, test_sp)
+output <- data.frame(id=test$id,unit_sales=exp(pred)-1)
+write.csv('submit/xgb1.csv',row.names=FALSE,quote=FALSE)
+
