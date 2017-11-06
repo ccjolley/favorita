@@ -34,8 +34,9 @@ rm(n,step,i,start,end,chunk)
 train <- train %>% select(date,log_sales)
 
 ###############################################################################
-# Test run of training to find optimal # of iterations 
-# simulate the real prediction situation by splitting out the last two weeks
+# Test run of training to find optimal # of iterations for default xgboost 
+# parameters.
+# Simulate the real prediction situation by splitting out the last two weeks
 ###############################################################################
 cutoff <- ymd('2017-07-31')
 dtrain <- xgb.DMatrix(data = train_j[train$date <= cutoff,],
@@ -99,4 +100,5 @@ test_sp <- test %>%
 pred <- predict(xgb_prod, test_sp)
 output <- data.frame(id=test$id,unit_sales=exp(pred)-1)
 write.csv(output,'submit/xgb1.csv',row.names=FALSE,quote=FALSE)
+
 
