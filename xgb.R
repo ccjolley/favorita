@@ -3,6 +3,7 @@ library(xgboost)
 library(Matrix)
 library(data.table)
 library(lubridate)
+library(ggplot2)
 
 train <- fread('train.csv',header=TRUE,sep=',') # 33% of memory on r4.2xlarge
 train <- train %>% 
@@ -32,6 +33,64 @@ rm(n,step,i,start,end,chunk)
 
 # Save memory by keeping only the columns I still need in train
 train <- train %>% select(date,log_sales)
+
+###############################################################################
+# Small datasets for faster training
+# My real test dataset has 3370464 rows; if I go with a 70/30 split then I'll
+# want ~11M rows, with ~8M in the training set
+###############################################################################
+n <- 3370464
+end_test <- xgb.DMatrix(data = tail(train_j,n),
+                        label = train$log_sales %>% tail(n))
+end_train <- xgb.DMatrix(data= tail(train_j,n*10/3) %>% head(n*7/3),
+                         label = train$log_sales %>% tail(n*10/3) %>% head(n*7/3))
+xgb.DMatrix.save(end_train,'end-train.data')
+xgb.DMatrix.save(end_test,'end-test.data')
+
+# Start here!
+end_train <- xgb.DMatrix('end-train.data')
+end_test <- xgb.DMatrix('end-test.data')
+
+watchlist <- list(train=end_train, test=end_test)
+xgb1 <- xgb.train(params=list(max_depth=7),
+                  data = end_train, 
+                  watchlist=watchlist,
+                  objective = "reg:linear",
+                  nthread=16, # for AWS r4.2xlarge
+                  nrounds=100)
+
+min(xgb1$evaluation_log$test_rmse)
+
+# Default parameters: min test-rmse = 0.790962
+# max_depth=7, 0.789887
+# max_depth=8,0.790657
+# max_depth=10, 0.791362
+
+
+ggplot(xgb1$evaluation_log,aes(x=iter,y=test_rmse)) +
+  geom_point(size=2,color='cornflowerblue') +
+  geom_line(size=1,color='cornflowerblue') +
+  theme_classic()
+
+# Let's try submitting with this model and see if the leaderboard result 
+# looks reasonable...
+
+test <- fread('test.csv',header=T,sep=',')
+test_sp <- test %>%
+  join_data %>%
+  select(-date) %>%
+  mutate(onpromotion=factor(onpromotion,levels=c('TRUE','FALSE','NA')),
+         year=factor(year,levels=c('2013','2014','2015','2016','2017')),
+         month=factor(month,levels=c('Jan','Feb','Mar','Apr','May','Jun','Jul',
+                                     'Aug','Sep','Oct','Nov','Dec'))) %>% 
+  df2sparse
+
+pred <- predict(xgb1, test_sp)
+output <- data.frame(id=test$id,unit_sales=exp(pred)-1)
+write.csv(output,'submit/xgb2.csv',row.names=FALSE,quote=FALSE)
+
+output <- output %>% mutate(unit_sales=round(unit_sales))
+write.csv(output,'submit/xgb3.csv',row.names=FALSE,quote=FALSE)
 
 ###############################################################################
 # Test run of training to find optimal # of iterations for default xgboost 
