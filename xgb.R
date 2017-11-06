@@ -4,15 +4,14 @@ library(Matrix)
 library(data.table)
 library(lubridate)
 
-system.time(train <- fread('train.csv',header=TRUE,sep=',')) # 33% of memory on r4.2xlarge
+train <- fread('train.csv',header=TRUE,sep=',') # 33% of memory on r4.2xlarge
 train <- train %>% 
   mutate(log_sales=ifelse(unit_sales > 0,log(unit_sales+1),0),
          date=ymd(date)) %>%
   select(-unit_sales)
 source('joins.R')
 
-# Haven't succeeded at doing this in memory in one shot; try it this way
-n <- 10
+n <- 25
 step <- round(nrow(train)/n + 1)
 train_j <- Matrix(nrow=0,ncol=0)
 for (i in 1:n) {
@@ -29,12 +28,13 @@ for (i in 1:n) {
   }
   train_j <- rbind(train_j,chunk)
 }
+rm(n,step,i,start,end,chunk)
 
 # Save memory by keeping only the columns I still need in train
 train <- train %>% select(date,log_sales)
 
 ###############################################################################
-# Now for the training!
+# Test run of training to find optimal # of iterations 
 # simulate the real prediction situation by splitting out the last two weeks
 ###############################################################################
 cutoff <- ymd('2017-07-31')
@@ -42,11 +42,61 @@ dtrain <- xgb.DMatrix(data = train_j[train$date <= cutoff,],
                       label=train[train$date <= cutoff,'log_sales'])
 dtest <- xgb.DMatrix(data = train_j[train$date > cutoff,],
                      label=train[train$date > cutoff,'log_sales'])
+xgb.DMatrix.save(dtrain,'bench-train.data')
+xgb.DMatrix.save(dtest,'bench-test.data')
+
+# Start here!
+dtrain <- xgb.DMatrix('bench-train.data')
+dtest <- xgb.DMatrix('bench-test.data')
 
 watchlist <- list(train=dtrain, test=dtest)
 xgb1 <- xgb.train(data = dtrain, 
                   watchlist=watchlist,
                   objective = "reg:linear",
                   nthread=8, # for AWS r4.2xlarge
-                  nrounds=200)
-# Seems to be overfitting after about 10 rounds
+                  nrounds=4)
+
+# This isn't a memory hog, especially when I load dtrain and dtest in a clean R 
+# session using xgb.DMatrix(). Memory usage seems pegged at about 35.2% on an
+# r4.2xlarge instance, so this is manageable.
+
+# It seems like it hangs if I try to save source code changes while it's 
+# running, oddly.
+
+# test-rmse stopped decreasing after 182 rounds; stop here for the real
+# training.
+
+###############################################################################
+# Production training, generate output
+###############################################################################
+dprod <- xgb.DMatrix(data = train_j,
+                     label=train$log_sales)
+xgb.DMatrix.save(dprod,'prod-train.data')
+
+# Start here!
+dprod <- xgb.DMatrix('prod-train.data')
+
+watchlist=list(train=dprod)
+xgb_prod <- xgb.train(data = dprod, 
+                      watchlist=watchlist,
+                      verbose = 1,
+                      objective = "reg:linear",
+                      nthread=8, # for AWS r4.4xlarge
+                      nrounds=182)
+
+# TODO: Can I do a custom objective function?
+
+test <- fread('test.csv',header=T,sep=',')
+test_sp <- test %>%
+  join_data %>%
+  select(-date) %>%
+  mutate(onpromotion=factor(onpromotion,levels=c('TRUE','FALSE','NA')),
+         year=factor(year,levels=c('2013','2014','2015','2016','2017')),
+         month=factor(month,levels=c('Jan','Feb','Mar','Apr','May','Jun','Jul',
+                                     'Aug','Sep','Oct','Nov','Dec'))) %>% 
+  df2sparse
+
+pred <- predict(xgb_prod, test_sp)
+output <- data.frame(id=test$id,unit_sales=exp(pred)-1)
+write.csv(output,'submit/xgb1.csv',row.names=FALSE,quote=FALSE)
+

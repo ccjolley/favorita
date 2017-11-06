@@ -12,7 +12,7 @@ library(lubridate)
 
 ### Date features
 all_dates <- data.frame(date=seq(ymd('2013-01-01'),
-                                 ymd('2017-08-15'),
+                                 ymd('2017-08-31'),
                                  by='1 day')) %>%
   mutate(year=as.factor(lubridate::year(date)),
          month=lubridate::month(date,label=TRUE),
