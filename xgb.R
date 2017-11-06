@@ -101,4 +101,12 @@ pred <- predict(xgb_prod, test_sp)
 output <- data.frame(id=test$id,unit_sales=exp(pred)-1)
 write.csv(output,'submit/xgb1.csv',row.names=FALSE,quote=FALSE)
 
+## Sanity checks
+xgb_prod$evaluation_log$train_rmse %>% tail
+# Leaderboard result was 1.217 -- did I just overtrain brutally?
+
+importance_matrix <- xgb.importance(model = xgb_prod)
+print(importance_matrix) %>% head
+xgb.plot.importance(importance_matrix = importance_matrix)
+test_sp@Dimnames[[2]][33-1]
 
